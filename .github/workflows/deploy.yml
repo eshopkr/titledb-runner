@@ -1,0 +1,57 @@
+name: Deploy
+
+on:
+  schedule:
+    - cron: '0 4 * * *' # 한국시간 13:00 (UTC+9)
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Download
+        run: |
+          mkdir -p data output
+          wget -O data/master.zip --quiet https://github.com/blawar/titledb/archive/master.zip
+          unzip data/master.zip -d data
+      - name: Build
+        run: |
+          bun run match.mjs
+
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: eshopkr
+          repositories: titledb
+
+      - name: Deploy
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          VERSION_TAG="$(TZ=Asia/Seoul date '+%-y.%-m.%-d')"
+          DIST_DIR="output"
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/eshopkr/titledb.git"
+
+          cd "$DIST_DIR"
+          rm -rf ./.git
+          git init
+          git config user.name "eshopkr"
+          git config user.email "deploy@eshopkr.local"
+          git add -A
+          git commit -m "Deploy ${VERSION_TAG}"
+          git remote add origin "$REMOTE"
+          git branch -M main
+          git push -f origin main
+
+          # 원격의 기존 태그 모두 삭제
+          git ls-remote --tags origin | awk '{print $2}' | while read ref; do
+            git push origin --delete "$ref" 2>/dev/null || true
+          done
+
+          git tag "$VERSION_TAG"
+          git push origin "$VERSION_TAG"
